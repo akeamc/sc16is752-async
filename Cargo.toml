@@ -1,0 +1,11 @@
+[package]
+name = "sc16is752-async"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embedded-hal-async = "1.0.0"
+embedded-io-async = "0.7.0"
+heapless = "0.9.2"
+log = "0.4.29"
+modular-bitfield = "0.13.1"
