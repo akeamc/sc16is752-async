@@ -3,16 +3,14 @@
 use core::{error::Error as CoreError, fmt};
 
 use embedded_hal_async::{
-    delay::DelayNs,
     digital::Wait,
     spi::{Error as SpiError, SpiDevice},
 };
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
-use log::info;
-use modular_bitfield::prelude::*;
+use heapless::Vec;
 
 pub use crate::low_level::Channel;
-use crate::low_level::{FifoControl, Ier, InterruptSource, LineControl, RegisterWrapper};
+use crate::low_level::{FifoControl, RegisterWrapper, THR};
 
 mod low_level;
 
@@ -40,7 +38,7 @@ where
         baud_rate: u32,
         crystal_freq: u32,
     ) -> Result<(), Error<Spi::Error>> {
-        // Enable FIFO and reset TX/RX FIFOs
+        // First enable FIFO - this is critical for TXLVL to work properly
         self.regs
             .write_fcr(
                 self.channel,
@@ -51,28 +49,32 @@ where
             )
             .await?;
 
-        let lcr = LineControl::new();
+        // Read current LCR to preserve settings
+        let mut lcr_val = self.regs.read(low_level::LCR, self.channel).await?[0];
 
-        // Enable divisor latch to set baud rate
+        // Enable divisor latch (set bit 7)
+        lcr_val |= 0x80;
         self.regs
-            .write_lcr(self.channel, lcr.with_divisor_latch_enable(true))
+            .write(low_level::LCR, self.channel, [lcr_val])
             .await?;
 
-        self.regs
-            .write_divisor(self.channel, (crystal_freq / (16 * baud_rate)) as u16)
-            .await?;
+        // Check MCR register to determine prescaler (like reference implementation)
+        let mcr = self.regs.read(low_level::MCR, self.channel).await?[0];
+        let prescaler = if mcr == 0 { 1 } else { 4 };
 
-        // Disable divisor latch to return to normal operation
-        self.regs
-            .write_lcr(self.channel, lcr.with_divisor_latch_enable(false))
-            .await?;
+        // Calculate and write divisor
+        let divisor = ((crystal_freq / prescaler) / (16 * baud_rate)) as u16;
+        let [msb, lsb] = divisor.to_be_bytes();
 
-        // self.regs
-        //     .write_ier(
-        //         self.channel,
-        //         Ier::new().with_transmit_holding_register(true),
-        //     )
-        //     .await?;
+        self.regs.write(low_level::DLL, self.channel, [lsb]).await?;
+        self.regs.write(low_level::DLH, self.channel, [msb]).await?;
+
+        // Configure line control: 8N1 (8 data bits, no parity, 1 stop bit)
+        // Clear divisor latch enable (bit 7) and set 8-bit word length (bits 1:0 = 11)
+        lcr_val = 0x03; // 8 data bits, no parity, 1 stop bit
+        self.regs
+            .write(low_level::LCR, self.channel, [lcr_val])
+            .await?;
 
         Ok(())
     }
@@ -118,14 +120,7 @@ impl<Spi: SpiDevice, Irq: Wait> Write for Sc16is752<Spi, Irq> {
         let space_left = self.regs.read_txlvl(self.channel).await? as usize;
         let len = buf.len().min(space_left);
 
-        info!("writing {} bytes", len);
-
-        // Write bytes to THR register
-        for i in 0..len {
-            self.regs
-                .write(low_level::THR, self.channel, [buf[i]])
-                .await?;
-        }
+        self.regs.write_many_thr(self.channel, buf).await?;
 
         Ok(len)
     }

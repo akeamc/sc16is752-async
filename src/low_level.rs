@@ -1,4 +1,5 @@
-use embedded_hal_async::spi::SpiDevice;
+use embedded_hal_async::spi::{Operation, SpiDevice};
+use heapless::Vec;
 use modular_bitfield::prelude::*;
 
 use crate::Error;
@@ -109,6 +110,18 @@ impl<Spi: SpiDevice> RegisterWrapper<Spi> {
 
     pub async fn read_rxlvl(&mut self, channel: Channel) -> Result<u8, Error<Spi::Error>> {
         self.read(RXLVL, channel).await.map(|[byte]| byte)
+    }
+
+    pub async fn write_many_thr(
+        &mut self,
+        channel: Channel,
+        data: &[u8],
+    ) -> Result<(), Error<Spi::Error>> {
+        for byte in data {
+            self.write(THR, channel, [*byte]).await?;
+        }
+
+        Ok(())
     }
 }
 
