@@ -1,6 +1,6 @@
 #![no_std]
 
-use core::{error::Error as CoreError, fmt};
+use core::{error::Error as CoreError, fmt, future::pending};
 
 use embedded_hal_async::{
     digital::Wait,
@@ -97,7 +97,7 @@ impl<SpiErr: SpiError> embedded_io_async::Error for Error<SpiErr> {
 
 impl<SpiErr: SpiError> fmt::Display for Error<SpiErr> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SC16IS752 Error: {}", self)
+        write!(f, "SC16IS752 Error: {:?}", self)
     }
 }
 
@@ -132,6 +132,8 @@ impl<Spi: SpiDevice, Irq: Wait> Write for Sc16is752<Spi, Irq> {
 
 impl<Spi: SpiDevice, Irq: Wait> Read for Sc16is752<Spi, Irq> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        todo!()
+        // todo!()
+
+        pending().await
     }
 }
