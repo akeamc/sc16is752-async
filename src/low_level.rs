@@ -1,5 +1,4 @@
-use embedded_hal_async::spi::{Operation, SpiDevice};
-use heapless::Vec;
+use embedded_hal_async::spi::SpiDevice;
 use modular_bitfield::prelude::*;
 
 use crate::Error;
@@ -39,10 +38,7 @@ impl<Spi: SpiDevice> RegisterWrapper<Spi> {
             .with_channel(channel)
             .into_bytes();
 
-        self.spi
-            .write(&mut [rab, value[0]])
-            .await
-            .map_err(Error::Spi)
+        self.spi.write(&[rab, value[0]]).await.map_err(Error::Spi)
     }
 
     pub async fn read(&mut self, reg: u8, channel: Channel) -> Result<[u8; 1], Error<Spi::Error>> {
@@ -77,32 +73,32 @@ impl<Spi: SpiDevice> RegisterWrapper<Spi> {
         self.write(FCR, channel, fcr.into_bytes()).await
     }
 
-    pub async fn write_lcr(
-        &mut self,
-        channel: Channel,
-        lcr: LineControl,
-    ) -> Result<(), Error<Spi::Error>> {
-        self.write(LCR, channel, lcr.into_bytes()).await
-    }
+    // pub async fn write_lcr(
+    //     &mut self,
+    //     channel: Channel,
+    //     lcr: LineControl,
+    // ) -> Result<(), Error<Spi::Error>> {
+    //     self.write(LCR, channel, lcr.into_bytes()).await
+    // }
 
-    pub async fn write_mcr(
-        &mut self,
-        channel: Channel,
-        mcr: ModemControl,
-    ) -> Result<(), Error<Spi::Error>> {
-        self.write(MCR, channel, mcr.into_bytes()).await
-    }
+    // pub async fn write_mcr(
+    //     &mut self,
+    //     channel: Channel,
+    //     mcr: ModemControl,
+    // ) -> Result<(), Error<Spi::Error>> {
+    //     self.write(MCR, channel, mcr.into_bytes()).await
+    // }
 
-    pub async fn write_divisor(
-        &mut self,
-        channel: Channel,
-        divisor: u16,
-    ) -> Result<(), Error<Spi::Error>> {
-        let [msb, lsb] = divisor.to_be_bytes();
+    // pub async fn write_divisor(
+    //     &mut self,
+    //     channel: Channel,
+    //     divisor: u16,
+    // ) -> Result<(), Error<Spi::Error>> {
+    //     let [msb, lsb] = divisor.to_be_bytes();
 
-        self.write(DLL, channel, [lsb]).await?;
-        self.write(DLH, channel, [msb]).await
-    }
+    //     self.write(DLL, channel, [lsb]).await?;
+    //     self.write(DLH, channel, [msb]).await
+    // }
 
     pub async fn read_txlvl(&mut self, channel: Channel) -> Result<u8, Error<Spi::Error>> {
         self.read(TXLVL, channel).await.map(|[byte]| byte)
@@ -122,6 +118,10 @@ impl<Spi: SpiDevice> RegisterWrapper<Spi> {
         }
 
         Ok(())
+    }
+
+    pub async fn read_lsr(&mut self, channel: Channel) -> Result<Lsr, Error<Spi::Error>> {
+        self.read(LSR, channel).await.map(Lsr::from_bytes)
     }
 }
 
@@ -143,8 +143,11 @@ enum ReadWrite {
 struct Rab {
     #[skip]
     unused: B1,
+    #[skip(getters)]
     channel: Channel,
+    #[skip(getters)]
     register: B4,
+    #[skip(getters)]
     rw: ReadWrite,
 }
 
@@ -160,6 +163,7 @@ pub enum InterruptSource {
 
 #[bitfield(bits = 8)]
 pub struct Iir {
+    #[skip(getters)]
     fcr_msb: B2,
     pub source: InterruptSource,
     pub pending: bool,
@@ -221,8 +225,23 @@ pub enum Divisor {
 
 #[bitfield(bits = 8)]
 pub struct ModemControl {
+    #[skip(getters)]
     divisor: Divisor,
+    #[skip]
     unused: B7,
+}
+
+#[bitfield(bits = 8)]
+pub struct Lsr {
+    #[skip]
+    unused: B1,
+    pub thr_tsr_empty: bool,
+    pub thr_empty: bool,
+    pub break_interrupt: bool,
+    pub framing_error: bool,
+    pub parity_error: bool,
+    pub overrun_error: bool,
+    pub data_in_receiver: bool,
 }
 
 #[cfg(test)]

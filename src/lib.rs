@@ -1,16 +1,13 @@
 #![no_std]
 
-use core::{error::Error as CoreError, fmt, future::pending};
-
 use embedded_hal_async::{
     digital::Wait,
     spi::{Error as SpiError, SpiDevice},
 };
 use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
-use heapless::Vec;
 
 pub use crate::low_level::Channel;
-use crate::low_level::{FifoControl, RegisterWrapper, THR};
+use crate::low_level::{FifoControl, Ier, RegisterWrapper};
 
 mod low_level;
 
@@ -38,7 +35,7 @@ where
         baud_rate: u32,
         crystal_freq: u32,
     ) -> Result<(), Error<Spi::Error>> {
-        // First enable FIFO - this is critical for TXLVL to work properly
+        // Enable FIFO with reset of both TX and RX
         self.regs
             .write_fcr(
                 self.channel,
@@ -58,7 +55,7 @@ where
             .write(low_level::LCR, self.channel, [lcr_val])
             .await?;
 
-        // Check MCR register to determine prescaler (like reference implementation)
+        // Check MCR register to determine prescaler
         let mcr = self.regs.read(low_level::MCR, self.channel).await?[0];
         let prescaler = if mcr == 0 { 1 } else { 4 };
 
@@ -70,22 +67,27 @@ where
         self.regs.write(low_level::DLH, self.channel, [msb]).await?;
 
         // Configure line control: 8N1 (8 data bits, no parity, 1 stop bit)
-        // Clear divisor latch enable (bit 7) and set 8-bit word length (bits 1:0 = 11)
-        lcr_val = 0x03; // 8 data bits, no parity, 1 stop bit
         self.regs
-            .write(low_level::LCR, self.channel, [lcr_val])
+            .write(low_level::LCR, self.channel, [0x03])
+            .await?;
+
+        // Enable RHR interrupt so we get notified when data arrives
+        self.regs
+            .write_ier(self.channel, Ier::new().with_receive_holding_register(true))
             .await?;
 
         Ok(())
     }
 
-    async fn wait_for_irq(&mut self) {
-        self.irq.wait_for_low().await.unwrap();
+    async fn wait_for_irq(&mut self) -> Result<(), Error<Spi::Error>> {
+        self.irq.wait_for_low().await.ok();
+        Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error<SpiErr> {
+    #[error("spi error: {0:?}")]
     Spi(SpiErr),
 }
 
@@ -94,14 +96,6 @@ impl<SpiErr: SpiError> embedded_io_async::Error for Error<SpiErr> {
         ErrorKind::Other
     }
 }
-
-impl<SpiErr: SpiError> fmt::Display for Error<SpiErr> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SC16IS752 Error: {:?}", self)
-    }
-}
-
-impl<SpiErr: SpiError> CoreError for Error<SpiErr> {}
 
 impl<Spi, Irq> ErrorType for Sc16is752<Spi, Irq>
 where
@@ -116,24 +110,87 @@ impl<Spi: SpiDevice, Irq: Wait> Write for Sc16is752<Spi, Irq> {
             return Ok(0);
         }
 
-        // Get available space in TX FIFO
-        let space_left = self.regs.read_txlvl(self.channel).await? as usize;
-        let len = buf.len().min(space_left);
+        loop {
+            let space = self.regs.read_txlvl(self.channel).await? as usize;
 
-        self.regs.write_many_thr(self.channel, buf).await?;
+            if space > 0 {
+                let len = buf.len().min(space);
+                self.regs.write_many_thr(self.channel, &buf[..len]).await?;
+                return Ok(len);
+            }
 
-        Ok(len)
+            // No space — enable THR interrupt and wait
+            self.regs
+                .write_ier(
+                    self.channel,
+                    Ier::new()
+                        .with_receive_holding_register(true)
+                        .with_transmit_holding_register(true),
+                )
+                .await?;
+
+            self.wait_for_irq().await?;
+
+            // Read IIR to clear the interrupt
+            let _iir = self.regs.read_iir(self.channel).await?;
+
+            // Disable THR interrupt (leave RHR enabled)
+            self.regs
+                .write_ier(self.channel, Ier::new().with_receive_holding_register(true))
+                .await?;
+        }
     }
 
     async fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+        loop {
+            let lsr = self.regs.read_lsr(self.channel).await?;
+            if lsr.thr_empty() && lsr.thr_tsr_empty() {
+                return Ok(());
+            }
+
+            // Enable THR interrupt and wait for FIFO to drain
+            self.regs
+                .write_ier(
+                    self.channel,
+                    Ier::new()
+                        .with_receive_holding_register(true)
+                        .with_transmit_holding_register(true),
+                )
+                .await?;
+
+            self.wait_for_irq().await?;
+            let _iir = self.regs.read_iir(self.channel).await?;
+
+            // Disable THR interrupt
+            self.regs
+                .write_ier(self.channel, Ier::new().with_receive_holding_register(true))
+                .await?;
+        }
     }
 }
 
 impl<Spi: SpiDevice, Irq: Wait> Read for Sc16is752<Spi, Irq> {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        // todo!()
+        if buf.is_empty() {
+            return Ok(0);
+        }
 
-        pending().await
+        loop {
+            let available = self.regs.read_rxlvl(self.channel).await? as usize;
+
+            if available > 0 {
+                let len = buf.len().min(available);
+                for byte in buf.iter_mut() {
+                    *byte = self.regs.read(low_level::RHR, self.channel).await?[0];
+                }
+                return Ok(len);
+            }
+
+            // No data — wait for RHR interrupt
+            self.wait_for_irq().await?;
+
+            // Read IIR to clear the interrupt
+            let _iir = self.regs.read_iir(self.channel).await?;
+        }
     }
 }
