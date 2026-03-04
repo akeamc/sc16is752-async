@@ -163,22 +163,22 @@ pub enum InterruptSource {
 
 #[bitfield(bits = 8)]
 pub struct Iir {
+    pub pending: bool,
+    pub source: InterruptSource,
     #[skip(getters)]
     fcr_msb: B2,
-    pub source: InterruptSource,
-    pub pending: bool,
 }
 
 #[bitfield(bits = 8)]
 pub struct Ier {
-    pub cts: bool,
-    pub rts: bool,
-    pub x_off: bool,
-    pub sleep: bool,
-    pub modem_status: bool,
-    pub receive_line_status: bool,
-    pub transmit_holding_register: bool,
     pub receive_holding_register: bool,
+    pub transmit_holding_register: bool,
+    pub receive_line_status: bool,
+    pub modem_status: bool,
+    pub sleep: bool,
+    pub x_off: bool,
+    pub rts: bool,
+    pub cts: bool,
 }
 
 #[derive(Specifier)]
@@ -199,22 +199,22 @@ pub enum TxFifoTrigger {
 
 #[bitfield(bits = 8)]
 pub struct FifoControl {
-    pub rx_trigger: RxFifoTrigger,
-    pub tx_trigger: TxFifoTrigger,
+    pub enable: bool,
+    pub reset_rx: bool,
+    pub reset_tx: bool,
     #[skip]
     reserved: B1,
-    pub reset_tx: bool,
-    pub reset_rx: bool,
-    pub enable: bool,
+    pub tx_trigger: TxFifoTrigger,
+    pub rx_trigger: RxFifoTrigger,
 }
 
 #[bitfield(bits = 8)]
 #[derive(Debug, Clone, Copy)]
 pub struct LineControl {
-    pub divisor_latch_enable: bool,
-    pub break_control_bit: bool,
     #[skip]
     unused: B6,
+    pub break_control_bit: bool,
+    pub divisor_latch_enable: bool,
 }
 
 #[derive(Specifier)]
@@ -225,23 +225,23 @@ pub enum Divisor {
 
 #[bitfield(bits = 8)]
 pub struct ModemControl {
-    #[skip(getters)]
-    divisor: Divisor,
     #[skip]
     unused: B7,
+    #[skip(getters)]
+    divisor: Divisor,
 }
 
 #[bitfield(bits = 8)]
 pub struct Lsr {
+    pub data_in_receiver: bool,
+    pub overrun_error: bool,
+    pub parity_error: bool,
+    pub framing_error: bool,
+    pub break_interrupt: bool,
+    pub thr_empty: bool,
+    pub thr_tsr_empty: bool,
     #[skip]
     unused: B1,
-    pub thr_tsr_empty: bool,
-    pub thr_empty: bool,
-    pub break_interrupt: bool,
-    pub framing_error: bool,
-    pub parity_error: bool,
-    pub overrun_error: bool,
-    pub data_in_receiver: bool,
 }
 
 #[cfg(test)]
