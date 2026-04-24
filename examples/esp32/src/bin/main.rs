@@ -60,9 +60,9 @@ async fn main(_spawner: Spawner) -> ! {
     const BAUD: u32 = 115_200;
     const XTAL_FREQ: u32 = 14_745_600;
 
-    loop {
-        sc16.init(BAUD, XTAL_FREQ).await.unwrap();
+    sc16.init(BAUD, XTAL_FREQ).await.unwrap();
 
+    loop {
         sc16.write_all(b"Hello world!").await.unwrap();
         let mut buf = [0; 12];
         sc16.read_exact(&mut buf).await.unwrap();

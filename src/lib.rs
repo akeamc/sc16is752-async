@@ -180,9 +180,9 @@ impl<Spi: SpiDevice, Irq: Wait> Read for Sc16is752<Spi, Irq> {
 
             if available > 0 {
                 let len = buf.len().min(available);
-                for byte in buf[..len].iter_mut() {
-                    *byte = self.regs.read(low_level::RHR, self.channel).await?[0];
-                }
+                self.regs
+                    .read_many_rhr(self.channel, &mut buf[..len])
+                    .await?;
                 return Ok(len);
             }
 

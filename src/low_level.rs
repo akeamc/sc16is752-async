@@ -113,10 +113,45 @@ impl<Spi: SpiDevice> RegisterWrapper<Spi> {
         channel: Channel,
         data: &[u8],
     ) -> Result<(), Error<Spi::Error>> {
-        for byte in data {
-            self.write(THR, channel, [*byte]).await?;
-        }
+        let [rab] = Rab::new()
+            .with_rw(ReadWrite::Write)
+            .with_register(THR)
+            .with_channel(channel)
+            .into_bytes();
 
+        // Burst write: single SPI frame with RAB + all data bytes.
+        // Max 64 bytes of data (FIFO size) + 1 RAB byte.
+        let mut buf = [0u8; 65];
+        buf[0] = rab;
+        let len = data.len().min(64);
+        buf[1..1 + len].copy_from_slice(&data[..len]);
+        self.spi
+            .write(&buf[..1 + len])
+            .await
+            .map_err(Error::Spi)
+    }
+
+
+    pub async fn read_many_rhr(
+        &mut self,
+        channel: Channel,
+        data: &mut [u8],
+    ) -> Result<(), Error<Spi::Error>> {
+        let [rab] = Rab::new()
+            .with_rw(ReadWrite::Read)
+            .with_register(RHR)
+            .with_channel(channel)
+            .into_bytes();
+
+        // Burst read: single SPI frame with RAB + N dummy bytes, returns N data bytes.
+        let mut buf = [0u8; 65];
+        buf[0] = rab;
+        let len = data.len().min(64);
+        self.spi
+            .transfer_in_place(&mut buf[..1 + len])
+            .await
+            .map_err(Error::Spi)?;
+        data[..len].copy_from_slice(&buf[1..1 + len]);
         Ok(())
     }
 
